@@ -40,7 +40,8 @@ use std::{env, fmt};
 pub enum BuildMode {
     // /// Build the listed non-main packages into .a files. Packages named
     // /// main are ignored.
-    //Archive,
+    Archive,
+
     /// Build the listed main package, plus all packages it imports,
     /// into a C archive file. The only callable symbols will be those
     /// functions exported using a cgo //export comment. Requires
@@ -52,44 +53,45 @@ pub enum BuildMode {
     /// be those functions exported using a cgo //export comment.
     /// Requires exactly one main package to be listed.
     CShared,
-    // /// Listed main packages are built into executables and listed
-    // /// non-main packages are built into .a files (the default
-    // ///  behavior)
-    //Default,
 
-    // /// Combine all the listed non-main packages into a single shared
-    // /// library that will be used when building with the -linkshared
-    // /// option. Packages named main are ignored.
-    //Shared,
+    /// Listed main packages are built into executables and listed
+    /// non-main packages are built into .a files (the default
+    ///  behavior)
+    Default,
 
-    // /// Build the listed main packages and everything they import into
-    // /// executables. Packages not named main are ignored.
-    //Exe,
+    /// Combine all the listed non-main packages into a single shared
+    /// library that will be used when building with the -linkshared
+    /// option. Packages named main are ignored.
+    Shared,
 
-    // /// Build the listed main packages and everything they import into
-    // /// position independent executables (PIE). Packages not named
-    // /// main are ignored.
-    //Pie,
+    /// Build the listed main packages and everything they import into
+    /// executables. Packages not named main are ignored.
+    Exe,
 
-    // /// Build the listed main packages, plus all packages that they
-    // ///import, into a Go plugin. Packages not named main are ignored.
-    //Plugin,
+    /// Build the listed main packages and everything they import into
+    /// position independent executables (PIE). Packages not named
+    /// main are ignored.
+    Pie,
 
-    //Custom(String),
+    /// Build the listed main packages, plus all packages that they
+    ///import, into a Go plugin. Packages not named main are ignored.
+    Plugin,
+
+    Custom(String),
 }
 
 impl fmt::Display for BuildMode {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            // BuildMode::Archive => write!(f, "archive"),
+            BuildMode::Archive => write!(f, "archive"),
             BuildMode::CArchive => write!(f, "c-archive"),
             BuildMode::CShared => write!(f, "c-shared"),
-            // BuildMode::Default => write!(f, "default"),
-            // BuildMode::Shared => write!(f, "shared"),
-            // BuildMode::Exe => write!(f, "exe"),
-            // BuildMode::Pie => write!(f, "pie"),
-            // BuildMode::Plugin => write!(f, "plugin"),
-            // BuildMode::Custom(ref s) => write!(f, "{}", s),
+            BuildMode::Default => write!(f, "default"),
+            BuildMode::Shared => write!(f, "shared"),
+            BuildMode::Exe => write!(f, "exe"),
+            BuildMode::Pie => write!(f, "pie"),
+            BuildMode::Plugin => write!(f, "plugin"),
+            BuildMode::Custom(ref s) => write!(f, "{}", s),
         }
     }
 }
@@ -267,7 +269,7 @@ impl Build {
     /// Run the compiler, generating the file `output`
     ///
     /// This will return a result instead of panicing; see compile() for the complete description.
-    pub fn try_compile(&self, lib_name: &str) -> Result<(), Error> {
+    pub fn try_compile(&self, lib_name: &str, args: Option<Vec<&str>>) -> Result<(), Error> {
         let gnu_lib_name = self.get_gnu_lib_name(lib_name);
         let dst = self.get_out_dir()?;
         let out = dst.join(&gnu_lib_name);
@@ -285,6 +287,11 @@ impl Build {
 
         let mut command = process::Command::new(&self.compiler);
         command.arg("build");
+
+        if args.is_some() {
+            command.args(args.unwrap());
+        }
+
         command.args(&["-buildmode", &self.buildmode.to_string()]);
         command.args(&["-o", &out.display().to_string()]);
         command.args(self.files.iter());
@@ -314,6 +321,7 @@ impl Build {
                 self.println(&format!("cargo:rustc-link-lib=static={}", lib_name))
             }
             BuildMode::CShared => self.println(&format!("cargo:rustc-link-lib=dylib={}", lib_name)),
+            _ => {}
         }
         self.println(&format!("cargo:rustc-link-search=native={}", dst.display()));
         Ok(())
@@ -329,8 +337,8 @@ impl Build {
     /// Panics if `output` is not formatted correctly or if one of the underlying
     /// compiler commands fails. It can also panic if it fails reading file names
     /// or creating directories.
-    pub fn compile(&self, output: &str) {
-        if let Err(e) = self.try_compile(output) {
+    pub fn compile(&self, output: &str, args: Option<Vec<&str>>) {
+        if let Err(e) = self.try_compile(output, args) {
             fail(&e.message);
         }
     }
@@ -361,7 +369,13 @@ impl Build {
                 } else {
                     gnu_lib_name.push_str(".so")
                 }
-            }
+            },
+            BuildMode::Exe => {
+                if cfg!(windows) {
+                    gnu_lib_name.push_str(".exe")
+                }
+            },
+            _ => {}
         }
         gnu_lib_name
     }
@@ -480,12 +494,4 @@ fn spawn(cmd: &mut Command, program: &str) -> Result<(Child, JoinHandle<()>), Er
 fn fail(s: &str) -> ! {
     let _ = writeln!(io::stderr(), "\n\nerror occurred: {}\n\n", s);
     std::process::exit(1);
-}
-
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn it_works() {
-        assert_eq!(2 + 2, 4);
-    }
 }
